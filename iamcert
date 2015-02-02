@@ -55,7 +55,6 @@ if __name__ == '__main__':
     if args.path is not None:
         if args.path[0]  != '/': args.path = '/' + args.path
         if args.path[-1] != '/': args.path += '/'
-    print args.path; sys.exit(0)
 
     try:
         cxn = boto.iam.connection.IAMConnection()
