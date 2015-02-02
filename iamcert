@@ -1,0 +1,104 @@
+#!/usr/bin/env python
+
+import argparse, boto.iam, OpenSSL, sys
+
+def parseArgs():
+    parser = argparse.ArgumentParser(description='Tool to manage server certificates in IAM')
+    actions = parser.add_mutually_exclusive_group(required=True)
+    actions.add_argument('-d', '--delete', action='store', help='delete a certificate by name')
+    actions.add_argument('-g', '--get', action='store', help='get a certificate by name')
+    actions.add_argument('-l', '--list', action='store_true', help='list all certificates in IAM')
+    actions.add_argument('-p', '--put', type=argparse.FileType('r'), help='upload a certificate to IAM')
+    actions.add_argument('-u', '--update', action='store', help='update a certificate by name')
+    parser.add_argument('--path', action='store', help='path for uploaded certificate')
+    parser.add_argument('--name', action='store', help='name for uploaded/updated certificate')
+    parser.add_argument('--keyfile', type=argparse.FileType('r'), help='private key for uploaded certificate')
+    parser.add_argument('--chain', type=argparse.FileType('r'), default=None, help='cert chain for uploaded certificate')
+    return parser.parse_args()
+
+
+def list_certs(cxn):
+    req = cxn.get_all_server_certs()
+    return req.list_server_certificates_response.list_server_certificates_result.server_certificate_metadata_list
+
+def get_cert(cxn, name):
+    req = cxn.get_server_certificate(name)
+    return req.get_server_certificate_response.certificate_chain
+
+def put_cert(cxn, name, cert, key, path, chain):
+    res = cxn.upload_server_cert(name, cert, key, path=path, cert_chain=chain)
+    return res.upload_server_certificate_response.upload_server_certificate_result.server_certificate_metadata
+
+def delete_cert(cxn, name):
+    req = cxn.delete_server_cert(name)
+    return req.delete_server_certificate_response.response_metadata
+
+def update_cert_path(cxn, name, new_path):
+    req = cxn.update_server_cert(name, new_path=new_path)
+    return req.update_server_certificate_response.response_metadata
+
+def update_cert_name(cxn, name, new_name):
+    req = cxn.update_server_cert(name, new_cert_name=new_name)
+    return req.update_server_certificate_response.response_metadata
+
+
+def print_cert_list(certs):
+    template = "{server_certificate_id:22}{path:15}{server_certificate_name:16}{upload_date:25}{expiration:25}"
+    print template.format(server_certificate_id="Certificate ID", path="Path", server_certificate_name="Name", upload_date="Uploaded", expiration="Expires")
+    for rec in certs:
+        print template.format(**rec)
+
+
+
+if __name__ == '__main__':
+    args = parseArgs()
+    if args.path is not None:
+        if args.path[0]  != '/': args.path = '/' + args.path
+        if args.path[-1] != '/': args.path += '/'
+    print args.path; sys.exit(0)
+
+    try:
+        cxn = boto.iam.connection.IAMConnection()
+    except Exception, e:
+        print str(e)
+        sys.exit(1)
+
+    if args.list:
+        certs = list_certs(cxn)
+        print_cert_list(certs)
+        sys.exit(0)
+
+    elif args.get:
+        cert = get_cert(cxn, args.get)
+        print cert
+        sys.exit(0)
+
+    elif args.delete:
+        res = delete_cert(cxn, args.delete)
+        if res.request_id: print "Certificate \"%s\" deleted: %s" % (args.delete, res.request_id)
+        sys.exit(0)
+
+    elif args.put:
+        if args.keyfile is None:
+            sys.stderr.write("Uploading certificate requires corresponding keyfile")
+            sys.exit(1)
+        if args.name is None:
+            sys.stderr.write("Uploaded certificate requires a name")
+            sys.exit(1)
+        cert = ''.join(args.put.readlines())
+        key = ''.join(args.keyfile.readlines())
+        if args.chain is not None:
+            args.chain = ''.join(args.chain.readlines())
+        res = put_cert(cxn, args.name, cert, key, args.path, args.chain)
+        print_cert_list([res])
+        sys.exit(0)
+
+    elif args.update:
+        if args.path:
+            res = update_cert_path(cxn, args.update, args.path)
+            if res.request_id: print "Certificate \"%s\" path updated to \"%s\"" % (args.update, args.path)
+        if args.name:
+            res = update_cert_name(cxn, args.update, args.name)
+            if res.request_id: print "Certificate \"%s\" name updated to \"%s\"" % (args.update, args.name)
+        sys.exit(0)
+
